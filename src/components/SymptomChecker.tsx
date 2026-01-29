@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { symptoms, symptomCategories, matchDisease, Disease } from '@/data/healthData';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,8 +16,10 @@ import {
   XCircle,
   Lightbulb,
   Clock,
-  Leaf
+  Leaf,
+  Sparkles
 } from 'lucide-react';
+import { correctSpelling, getSuggestions } from '@/lib/spellCorrection';
 
 interface SymptomCheckerProps {
   onResultsFound: (diseases: Disease[]) => void;
@@ -28,6 +30,9 @@ export function SymptomChecker({ onResultsFound }: SymptomCheckerProps) {
   const [customSymptom, setCustomSymptom] = useState('');
   const [customSymptoms, setCustomSymptoms] = useState<string[]>([]);
   const [activeCategory, setActiveCategory] = useState(symptomCategories[0]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [spellingCorrection, setSpellingCorrection] = useState<{ corrected: string; show: boolean }>({ corrected: '', show: false });
 
   const handleSymptomToggle = (symptomId: string) => {
     setSelectedSymptoms(prev => 
@@ -37,11 +42,52 @@ export function SymptomChecker({ onResultsFound }: SymptomCheckerProps) {
     );
   };
 
-  const addCustomSymptom = () => {
-    if (customSymptom.trim() && !customSymptoms.includes(customSymptom.trim().toLowerCase())) {
-      setCustomSymptoms(prev => [...prev, customSymptom.trim().toLowerCase()]);
-      setCustomSymptom('');
+  // Update suggestions as user types
+  useEffect(() => {
+    if (customSymptom.length >= 2) {
+      const newSuggestions = getSuggestions(customSymptom);
+      setSuggestions(newSuggestions);
+      setShowSuggestions(newSuggestions.length > 0);
+      
+      // Check for spelling corrections
+      const { corrected, wasChanged } = correctSpelling(customSymptom);
+      if (wasChanged && corrected !== customSymptom) {
+        setSpellingCorrection({ corrected, show: true });
+      } else {
+        setSpellingCorrection({ corrected: '', show: false });
+      }
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setSpellingCorrection({ corrected: '', show: false });
     }
+  }, [customSymptom]);
+
+  const addCustomSymptom = (symptomToAdd?: string) => {
+    const symptomValue = symptomToAdd || customSymptom.trim();
+    if (symptomValue && !customSymptoms.includes(symptomValue.toLowerCase())) {
+      setCustomSymptoms(prev => [...prev, symptomValue.toLowerCase()]);
+      setCustomSymptom('');
+      setShowSuggestions(false);
+      setSpellingCorrection({ corrected: '', show: false });
+    }
+  };
+
+  const selectSuggestion = (suggestion: string) => {
+    // Find if this matches an existing symptom
+    const matchedSymptom = symptoms.find(s => s.name.toLowerCase() === suggestion.toLowerCase());
+    if (matchedSymptom && !selectedSymptoms.includes(matchedSymptom.id)) {
+      setSelectedSymptoms(prev => [...prev, matchedSymptom.id]);
+    } else {
+      addCustomSymptom(suggestion);
+    }
+    setCustomSymptom('');
+    setShowSuggestions(false);
+  };
+
+  const applySpellingCorrection = () => {
+    setCustomSymptom(spellingCorrection.corrected);
+    setSpellingCorrection({ corrected: '', show: false });
   };
 
   const removeCustomSymptom = (symptom: string) => {
@@ -140,30 +186,74 @@ export function SymptomChecker({ onResultsFound }: SymptomCheckerProps) {
         </Card>
       )}
 
-      {/* Custom Symptom Input */}
+      {/* Custom Symptom Input with Spell Correction */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg flex items-center gap-2">
             <Plus className="w-5 h-5 text-accent" />
             Add Custom Symptom
+            <Badge variant="outline" className="ml-2 text-xs font-normal">
+              <Sparkles className="w-3 h-3 mr-1" />
+              Auto-correct
+            </Badge>
           </CardTitle>
           <CardDescription>
-            Can't find your symptom? Add it here
+            Can't find your symptom? Type it here with spelling assistance
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="flex gap-2">
-            <Input
-              placeholder="Describe your symptom..."
-              value={customSymptom}
-              onChange={(e) => setCustomSymptom(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && addCustomSymptom()}
-              className="flex-1"
-            />
-            <Button onClick={addCustomSymptom} variant="secondary">
-              <Plus className="w-4 h-4 mr-1" />
-              Add
-            </Button>
+        <CardContent className="space-y-3">
+          <div className="relative">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Describe your symptom..."
+                value={customSymptom}
+                onChange={(e) => setCustomSymptom(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && addCustomSymptom()}
+                onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                className="flex-1"
+              />
+              <Button onClick={() => addCustomSymptom()} variant="secondary">
+                <Plus className="w-4 h-4 mr-1" />
+                Add
+              </Button>
+            </div>
+            
+            {/* Spelling Correction Suggestion */}
+            {spellingCorrection.show && (
+              <div className="mt-2 p-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                <span className="text-sm text-blue-700 dark:text-blue-300">
+                  Did you mean: 
+                  <button 
+                    onClick={applySpellingCorrection}
+                    className="font-semibold ml-1 underline hover:text-blue-900 dark:hover:text-blue-100"
+                  >
+                    {spellingCorrection.corrected}
+                  </button>
+                  ?
+                </span>
+              </div>
+            )}
+            
+            {/* Autocomplete Suggestions Dropdown */}
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-card border border-border rounded-md shadow-lg max-h-48 overflow-auto">
+                <div className="p-2 text-xs text-muted-foreground border-b border-border">
+                  Suggestions
+                </div>
+                {suggestions.map((suggestion, index) => (
+                  <button
+                    key={index}
+                    onClick={() => selectSuggestion(suggestion)}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex items-center gap-2"
+                  >
+                    <Search className="w-3 h-3 text-muted-foreground" />
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
